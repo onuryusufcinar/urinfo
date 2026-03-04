@@ -21,6 +21,7 @@
         button { padding: 12px 24px; background: #238636; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.9rem; flex: 1; }
         button#btnStop { background: var(--btn-stop); }
         button#btnOTA { background: var(--btn-ota); }
+        button#btnClear { background: #30363d; flex: 0.2; margin-top: 10px; }
         button:disabled { background: #444 !important; cursor: not-allowed; }
 
         .chart-container { width: 100%; max-width: 900px; background: var(--chart-bg); border: 1px solid #30363d; border-radius: 10px; padding: 15px; margin-bottom: 20px; box-sizing: border-box; }
@@ -36,12 +37,13 @@
     <div class="control-panel">
         <div class="label" style="margin-bottom: 10px;">Device Controls & OTA</div>
         <div class="input-group">
+            <input type="text" id="startLabel" placeholder="Start Label (e.g. Session_1)">
             <input type="text" id="otaVersion" placeholder="Version (e.g. 1.0.1)">
             <input type="text" id="wifiName" placeholder="WiFi Name">
             <input type="password" id="wifiPass" placeholder="WiFi Password">
         </div>
         <div class="btn-row">
-            <button onclick="sendCommand('Com;Start')">Start</button>
+            <button onclick="sendStartWithLabel()">Start</button>
             <button id="btnStop" onclick="sendCommand('Com;Stop')">Stop</button>
             <button id="btnOTA" onclick="sendOTA()">Start OTA</button>
         </div>
@@ -62,6 +64,7 @@
     <div class="chart-container"><canvas id="pirChart"></canvas></div>
 
     <div id="debug">System Log: Ready...<br></div>
+    <button id="btnClear" onclick="document.getElementById('debug').innerHTML = ''">Clear Log</button>
 
 <script>
     const SERVICE_UUID = '11111111-1111-1111-1111-111111111110';
@@ -81,6 +84,11 @@
             await actionChar.writeValue(new TextEncoder().encode(cmd));
             log(`Sent: ${cmd}`);
         } catch (e) { log(`Error: ${e.message}`); }
+    }
+
+    function sendStartWithLabel() {
+        const labelValue = document.getElementById('startLabel').value || "Default";
+        sendCommand(`Com;Start;${labelValue}`);
     }
 
     function sendOTA() {
@@ -148,7 +156,6 @@
         btn.innerText = 'Searching...';
 
         try {
-            // FIX: Ensure filters and optionalServices are clearly defined
             log("Opening Bluetooth selector...");
             const device = await navigator.bluetooth.requestDevice({
                 filters: [{ namePrefix: 'Urinfo_' }],
@@ -164,7 +171,7 @@
 
             for (const [id, uuid] of Object.entries(SINGLE_CHARS)) {
                 await subscribeChar(service, id, uuid, (buf) => handleSingle(id, buf));
-                await new Promise(r => setTimeout(r, 150)); // Slightly longer delay for stability
+                await new Promise(r => setTimeout(r, 150)); 
             }
 
             await subscribeChar(service, 'mmWave', UUID_MMWAVE, handleMmwave);
