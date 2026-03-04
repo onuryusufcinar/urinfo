@@ -21,7 +21,6 @@
         button { padding: 12px 24px; background: #238636; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.9rem; flex: 1; }
         button#btnStop { background: var(--btn-stop); }
         button#btnOTA { background: var(--btn-ota); }
-        button#btnClear { background: #30363d; flex: 0.2; margin-top: 10px; }
         button:disabled { background: #444 !important; cursor: not-allowed; }
 
         .chart-container { width: 100%; max-width: 900px; background: var(--chart-bg); border: 1px solid #30363d; border-radius: 10px; padding: 15px; margin-bottom: 20px; box-sizing: border-box; }
@@ -35,9 +34,9 @@
     <button id="btnConnect" onclick="startBLE()" style="margin-bottom: 20px; flex: none; width: 300px;">Connect Device</button>
 
     <div class="control-panel">
-        <div class="label" style="margin-bottom: 10px;">Device Controls & OTA</div>
+        <div class="label" style="margin-bottom: 10px;">Device Controls & SD Label</div>
         <div class="input-group">
-            <input type="text" id="startLabel" placeholder="Start Label (e.g. Session_1)">
+            <input type="text" id="startLabel" placeholder="SD Filename (e.g. Session_01)">
             <input type="text" id="otaVersion" placeholder="Version (e.g. 1.0.1)">
             <input type="text" id="wifiName" placeholder="WiFi Name">
             <input type="password" id="wifiPass" placeholder="WiFi Password">
@@ -64,7 +63,6 @@
     <div class="chart-container"><canvas id="pirChart"></canvas></div>
 
     <div id="debug">System Log: Ready...<br></div>
-    <button id="btnClear" onclick="document.getElementById('debug').innerHTML = ''">Clear Log</button>
 
 <script>
     const SERVICE_UUID = '11111111-1111-1111-1111-111111111110';
@@ -78,6 +76,18 @@
 
     let actionChar = null;
 
+    // Helper to generate DDMMYYYY_HHMM
+    function getTimestampLabel() {
+        const now = new Date();
+        const pad = (n) => n.toString().padStart(2, '0');
+        const day = pad(now.getDate());
+        const month = pad(now.getMonth() + 1);
+        const year = now.getFullYear();
+        const hours = pad(now.getHours());
+        const minutes = pad(now.getMinutes());
+        return `${day}${month}${year}_${hours}${minutes}`;
+    }
+
     async function sendCommand(cmd) {
         if (!actionChar) { log("Error: Not connected"); return; }
         try {
@@ -87,8 +97,9 @@
     }
 
     function sendStartWithLabel() {
-        const labelValue = document.getElementById('startLabel').value || "Default";
-        sendCommand(`Com;Start;${labelValue}`);
+        const label = document.getElementById('startLabel').value || "Default";
+        // Sends: Com;Start;04032026_2232
+        sendCommand(`Com;Start;${label}`);
     }
 
     function sendOTA() {
@@ -152,6 +163,7 @@
 
     async function startBLE() {
         const btn = document.getElementById('btnConnect');
+        const labelInput = document.getElementById('startLabel');
         btn.disabled = true;
         btn.innerText = 'Searching...';
 
@@ -164,8 +176,11 @@
 
             log(`Connecting to ${device.name}...`);
             const server = await device.gatt.connect();
-            const service = await server.getPrimaryService(SERVICE_UUID);
             
+            // Auto-fill the timestamp label upon connection
+            labelInput.value = getTimestampLabel();
+            
+            const service = await server.getPrimaryService(SERVICE_UUID);
             actionChar = await service.getCharacteristic(UUID_ACTION);
             log("✓ Command Link Ready");
 
