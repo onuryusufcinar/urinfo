@@ -6,11 +6,12 @@
     <title>Urinfo System</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        :root { --bg: #0d1117; --card: #161b22; --accent: #39d353; --text: #c9d1d9; --chart-bg: #1c2128; --btn-ota: #8957e5; --btn-stop: #da3633; }
+        :root { --bg: #0d1117; --card: #161b22; --accent: #39d353; --text: #c9d1d9; --chart-bg: #1c2128; --btn-ota: #8957e5; --btn-stop: #da3633; --btn-dl: #2188ff; }
         body { background: var(--bg); color: var(--text); font-family: -apple-system, sans-serif; padding: 20px; display: flex; flex-direction: column; align-items: center; }
         
         .header-container { width: 100%; max-width: 900px; display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
         .fw-version { font-size: 0.8rem; color: #8b949e; font-family: monospace; }
+        .recording-status { color: #ff4444; font-weight: bold; font-size: 0.8rem; display: none; margin-left: 10px; }
 
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; width: 100%; max-width: 900px; margin-bottom: 20px; }
         .card { background: var(--card); border: 1px solid #30363d; padding: 15px; border-radius: 10px; text-align: center; }
@@ -24,6 +25,7 @@
         .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
         button { padding: 12px 24px; background: #238636; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.9rem; flex: 1; }
         button#btnStop { background: var(--btn-stop); }
+        button#btnDownload { background: var(--btn-dl); display: none; } /* Hidden by default */
         button#btnOTA { background: var(--btn-ota); }
         button#btnClear { background: #30363d; flex: 0.2; margin-top: 10px; }
         button:disabled { background: #444 !important; cursor: not-allowed; }
@@ -36,23 +38,24 @@
 <body>
 
     <div class="header-container">
-        <h1>Urinfo System</h1>
+        <h1>Urinfo System <span id="recIndicator" class="recording-status">● RECORDING</span></h1>
         <div class="fw-version">FW: <span id="fwVer">--</span></div>
     </div>
 
     <button id="btnConnect" onclick="startBLE()" style="margin-bottom: 20px; flex: none; width: 300px;">Connect Device</button>
 
     <div class="control-panel">
-        <div class="label" style="margin-bottom: 10px;">Device Controls & OTA</div>
+        <div class="label" style="margin-bottom: 10px;">Device Controls & CSV Logging</div>
         <div class="input-group">
-            <input type="text" id="startLabel" placeholder="Timestamp Label">
-            <input type="text" id="otaVersion" placeholder="Version (e.g. 1.0.1)">
+            <input type="text" id="startLabel" placeholder="Filename / Session ID">
+            <input type="text" id="otaVersion" placeholder="OTA Version">
             <input type="text" id="wifiName" placeholder="WiFi Name">
             <input type="password" id="wifiPass" placeholder="WiFi Password">
         </div>
         <div class="btn-row">
-            <button onclick="sendStartWithLabel()">Start</button>
-            <button id="btnStop" onclick="sendCommand('Com;Stop')">Stop</button>
+            <button onclick="startRecording()">Start & Record</button>
+            <button id="btnStop" onclick="stopRecording()">Stop</button>
+            <button id="btnDownload" onclick="downloadCSV()">Download CSV</button>
             <button id="btnOTA" onclick="sendOTA()">Start OTA</button>
         </div>
     </div>
@@ -70,17 +73,14 @@
 
     <div class="chart-container"><canvas id="luxChart"></canvas></div>
     <div class="chart-container"><canvas id="pirChart"></canvas></div>
-
     <div id="debug">System Log: Ready...<br></div>
     <button id="btnClear" onclick="document.getElementById('debug').innerHTML = ''">Clear Log</button>
 
 <script>
-    // --- UUID Definitions ---
     const SERVICE_UUID = '11111111-1111-1111-1111-111111111110';
     const UUID_ACTION  = '11111111-1111-1111-2222-111111111116';
     const UUID_MMWAVE  = '11111111-1111-1111-2222-111111111115';
     const UUID_VERSION = '11111111-1111-1111-2222-111111111117';
-    
     const SINGLE_CHARS = {
         'valBat': '11111111-1111-1111-2222-111111111112',
         'valLux': '11111111-1111-1111-2222-111111111113',
@@ -88,8 +88,13 @@
     };
 
     let actionChar = null;
+    
+    // --- RECORDING STATE ---
+    let isRecording = false;
+    let dataBuffer = []; 
+    // Current sensor snapshots for the CSV row
+    let currentData = { bat: "", lux: "", pir: "", mDist: "", mEnrg: "", sDist: "", sEnrg: "", dDist: "" };
 
-    // --- Helper Functions ---
     function getTimestamp() {
         const now = new Date();
         const day = String(now.getDate()).padStart(2, '0');
@@ -97,121 +102,147 @@
         const year = now.getFullYear();
         const hours = String(now.getHours()).padStart(2, '0');
         const mins = String(now.getMinutes()).padStart(2, '0');
-        return `${day}${month}${year}_${hours}${mins}`;
+        const secs = String(now.getSeconds()).padStart(2, '0');
+        return `${day}${month}${year}_${hours}${mins}${secs}`;
     }
 
-    function log(m) {
-        const d = document.getElementById('debug');
-        d.innerHTML += `> ${m}<br>`;
-        d.scrollTop = d.scrollHeight;
+    // --- COMMANDS ---
+    function startRecording() {
+        const label = document.getElementById('startLabel').value || getTimestamp();
+        document.getElementById('startLabel').value = label;
+        
+        dataBuffer = []; // Clear old data
+        isRecording = true;
+        
+        document.getElementById('recIndicator').style.display = 'inline';
+        document.getElementById('btnDownload').style.display = 'none';
+        
+        sendCommand(`Com;Start;${label}`);
+        log(`Recording started: ${label}`);
     }
 
-    // --- BLE Commands ---
-    async function sendCommand(cmd) {
-        if (!actionChar) { log("Error: Not connected"); return; }
-        try {
-            await actionChar.writeValue(new TextEncoder().encode(cmd));
-            log(`Sent: ${cmd}`);
-        } catch (e) { log(`Error: ${e.message}`); }
+    function stopRecording() {
+        isRecording = false;
+        document.getElementById('recIndicator').style.display = 'none';
+        
+        if (dataBuffer.length > 0) {
+            document.getElementById('btnDownload').style.display = 'inline-block';
+        }
+        
+        sendCommand('Com;Stop');
+        log(`Recording stopped. ${dataBuffer.length} rows captured.`);
     }
 
-    function sendStartWithLabel() {
-        const labelValue = document.getElementById('startLabel').value || "Default";
-        sendCommand(`Com;Start;${labelValue}`);
+    function downloadCSV() {
+        const label = document.getElementById('startLabel').value || "log";
+        const header = "Timestamp,Battery,Lux,PIR,M-Dist,M-Enrg,S-Dist,S-Enrg,Detect\n";
+        const csvContent = header + dataBuffer.join("\n");
+        
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${label}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
     }
 
-    function sendOTA() {
-        const ver = document.getElementById('otaVersion').value || "1.0.0";
-        const ssid = document.getElementById('wifiName').value;
-        const pass = document.getElementById('wifiPass').value;
-        if (!ssid || !pass) { alert("WiFi info missing!"); return; }
-        sendCommand(`Com;OTA;${ver};${ssid};${pass}`);
+    // --- DATA CAPTURE ---
+    function recordRow() {
+        if (!isRecording) return;
+        const ts = new Date().toLocaleTimeString();
+        const row = `${ts},${currentData.bat},${currentData.lux},${currentData.pir},${currentData.mDist},${currentData.mEnrg},${currentData.sDist},${currentData.sEnrg},${currentData.dDist}`;
+        dataBuffer.push(row);
     }
 
-    // --- Data Handling ---
     function handleSingle(id, buf) {
         const clean = new TextDecoder().decode(buf).replace(/[^0-9.\-]/g, '');
         if (!clean) return;
         document.getElementById(id).innerText = clean;
-        if (id === 'valLux') updateChart(luxChart, parseFloat(clean));
-        if (id === 'valPir') updateChart(pirChart, parseFloat(clean));
+        
+        // Update snapshot
+        if (id === 'valBat') currentData.bat = clean;
+        if (id === 'valLux') { currentData.lux = clean; updateChart(luxChart, parseFloat(clean)); }
+        if (id === 'valPir') { currentData.pir = clean; updateChart(pirChart, parseFloat(clean)); }
+        
+        recordRow();
     }
 
     const MMWAVE_IDS = ['valMDist', 'valMEnrg', 'valSDist', 'valSEnrg', 'valDDist'];
     function handleMmwave(buf) {
         const parts = new TextDecoder().decode(buf).split(',');
         if (parts.length !== MMWAVE_IDS.length) return;
+        
         parts.forEach((v, i) => {
             const clean = v.replace(/[^0-9.\-]/g, '');
-            if (clean) document.getElementById(MMWAVE_IDS[i]).innerText = clean;
+            if (clean) {
+                document.getElementById(MMWAVE_IDS[i]).innerText = clean;
+                // Update mmwave snapshot parts
+                if (i === 0) currentData.mDist = clean;
+                if (i === 1) currentData.mEnrg = clean;
+                if (i === 2) currentData.sDist = clean;
+                if (i === 3) currentData.sEnrg = clean;
+                if (i === 4) currentData.dDist = clean;
+            }
         });
+        recordRow();
     }
 
-    // --- Charts ---
+    // ... (Keep existing BLE connection and Chart logic) ...
+    async function sendCommand(cmd) {
+        if (!actionChar) { log("Error: Not connected"); return; }
+        try { await actionChar.writeValue(new TextEncoder().encode(cmd)); } catch (e) { log(`Error: ${e.message}`); }
+    }
+
     const chartConfig = (l, c) => ({
         type: 'line',
         data: { labels: [], datasets: [{ label: l, data: [], borderColor: c, tension: 0.3, fill: false, pointRadius: 0 }] },
         options: { responsive: true, animation: false, scales: { x: { display: false }, y: { beginAtZero: true } } }
     });
-
     const luxChart = new Chart(document.getElementById('luxChart').getContext('2d'), chartConfig('Lux', '#ffcc00'));
     const pirChart = new Chart(document.getElementById('pirChart').getContext('2d'), chartConfig('PIR', '#58a6ff'));
-
     function updateChart(chart, val) {
         chart.data.labels.push('');
         chart.data.datasets[0].data.push(val);
         if (chart.data.labels.length > 30) { chart.data.labels.shift(); chart.data.datasets[0].data.shift(); }
         chart.update('none');
     }
+    function log(m) {
+        const d = document.getElementById('debug');
+        d.innerHTML += `> ${m}<br>`;
+        d.scrollTop = d.scrollHeight;
+    }
 
-    // --- Core BLE Connection ---
     async function subscribeChar(service, id, uuid, handler) {
         try {
             const char = await service.getCharacteristic(uuid);
             char.addEventListener('characteristicvaluechanged', (e) => handler(e.target.value));
             await char.startNotifications();
             log(`✓ ${id}`);
-            const init = await char.readValue();
-            handler(init);
         } catch (e) { log(`✗ ${id}`); }
     }
 
     async function startBLE() {
         const btn = document.getElementById('btnConnect');
-        btn.disabled = true;
-        btn.innerText = 'Searching...';
-
+        btn.disabled = true; btn.innerText = 'Searching...';
         try {
-            log("Opening Bluetooth selector...");
             const device = await navigator.bluetooth.requestDevice({
                 filters: [{ namePrefix: 'Urinfo_' }],
                 optionalServices: [SERVICE_UUID]
             });
-
-            log(`Connecting to ${device.name}...`);
             const server = await device.gatt.connect();
-
-            // 1. Auto-set timestamp label
-            const ts = getTimestamp();
-            document.getElementById('startLabel').value = ts;
-            log(`Label set: ${ts}`);
+            
+            // Auto-timestamp label on connect
+            document.getElementById('startLabel').value = getTimestamp().slice(0,-2); // remove seconds for label
 
             const service = await server.getPrimaryService(SERVICE_UUID);
-            
-            // 2. Read FW Version once
             try {
                 const verChar = await service.getCharacteristic(UUID_VERSION);
                 const verVal = await verChar.readValue();
-                const verStr = new TextDecoder().decode(verVal);
-                document.getElementById('fwVer').innerText = verStr;
-                log(`✓ Firmware: ${verStr}`);
-            } catch (vErr) { log("! Version unavailable"); }
+                document.getElementById('fwVer').innerText = new TextDecoder().decode(verVal);
+            } catch (vErr) {}
 
-            // 3. Setup Action characteristic
             actionChar = await service.getCharacteristic(UUID_ACTION);
-            log("✓ Command Link Ready");
-
-            // 4. Subscribe to sensors
             for (const [id, uuid] of Object.entries(SINGLE_CHARS)) {
                 await subscribeChar(service, id, uuid, (buf) => handleSingle(id, buf));
                 await new Promise(r => setTimeout(r, 150)); 
@@ -219,20 +250,12 @@
             await subscribeChar(service, 'mmWave', UUID_MMWAVE, handleMmwave);
 
             btn.innerText = 'Connected ✓';
-
             device.addEventListener('gattserverdisconnected', () => {
-                log('Device Lost');
+                isRecording = false;
                 actionChar = null;
-                document.getElementById('fwVer').innerText = '--';
-                btn.disabled = false;
-                btn.innerText = 'Connect Device';
+                btn.disabled = false; btn.innerText = 'Connect Device';
             });
-
-        } catch (err) {
-            log(`Error: ${err.message}`);
-            btn.disabled = false;
-            btn.innerText = 'Connect Device';
-        }
+        } catch (err) { log(`Error: ${err.message}`); btn.disabled = false; btn.innerText = 'Connect Device'; }
     }
 </script>
 </body>
