@@ -8,6 +8,11 @@
     <style>
         :root { --bg: #0d1117; --card: #161b22; --accent: #39d353; --text: #c9d1d9; --chart-bg: #1c2128; --btn-ota: #8957e5; --btn-stop: #da3633; }
         body { background: var(--bg); color: var(--text); font-family: -apple-system, sans-serif; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        
+        /* Updated header layout to include version */
+        .header-container { width: 100%; max-width: 900px; display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+        .fw-version { font-size: 0.8rem; color: #8b949e; }
+
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; width: 100%; max-width: 900px; margin-bottom: 20px; }
         .card { background: var(--card); border: 1px solid #30363d; padding: 15px; border-radius: 10px; text-align: center; }
         .value { font-size: 1.5rem; font-weight: bold; color: var(--accent); }
@@ -31,7 +36,11 @@
 </head>
 <body>
 
-    <h1>Urinfo System</h1>
+    <div class="header-container">
+        <h1>Urinfo System</h1>
+        <div class="fw-version">FW: <span id="fwVer">--</span></div>
+    </div>
+
     <button id="btnConnect" onclick="startBLE()" style="margin-bottom: 20px; flex: none; width: 300px;">Connect Device</button>
 
     <div class="control-panel">
@@ -70,6 +79,8 @@
     const SERVICE_UUID = '11111111-1111-1111-1111-111111111110';
     const UUID_ACTION  = '11111111-1111-1111-2222-111111111116';
     const UUID_MMWAVE  = '11111111-1111-1111-2222-111111111115';
+    const UUID_VERSION = '11111111-1111-1111-2222-111111111117'; // New Version UUID
+    
     const SINGLE_CHARS = {
         'valBat': '11111111-1111-1111-2222-111111111112',
         'valLux': '11111111-1111-1111-2222-111111111113',
@@ -166,6 +177,15 @@
             const server = await device.gatt.connect();
             const service = await server.getPrimaryService(SERVICE_UUID);
             
+            // --- READ VERSION ONCE ---
+            try {
+                const verChar = await service.getCharacteristic(UUID_VERSION);
+                const verVal = await verChar.readValue();
+                const verString = new TextDecoder().decode(verVal);
+                document.getElementById('fwVer').innerText = verString;
+                log(`✓ Firmware Version: ${verString}`);
+            } catch (vErr) { log("! Version Char Not Found"); }
+
             actionChar = await service.getCharacteristic(UUID_ACTION);
             log("✓ Command Link Ready");
 
@@ -180,6 +200,7 @@
             device.addEventListener('gattserverdisconnected', () => {
                 log('Device Lost');
                 actionChar = null;
+                document.getElementById('fwVer').innerText = '--';
                 btn.disabled = false;
                 btn.innerText = 'Connect Device';
             });
