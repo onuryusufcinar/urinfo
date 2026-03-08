@@ -87,7 +87,6 @@
     <div class="grid">
         <div class="card"><div class="label">Battery</div><div class="value"><span id="valBat">--</span>%</div></div>
         <div class="card"><div class="label">Lux</div><div class="value" id="valLux">--</div></div>
-        <div class="card"><div class="label">Ambient-I</div><div class="value" id="valAmbInt">--</div></div>
         <div class="card"><div class="label">PIR</div><div class="value" id="valPir">--</div></div>
         <div class="card"><div class="label">M-Dist</div><div class="value" id="valMDist">--</div></div>
         <div class="card"><div class="label">M-Enrg</div><div class="value" id="valMEnrg">--</div></div>
@@ -103,6 +102,7 @@
     <button id="btnClear" onclick="document.getElementById('debug').innerHTML = ''">Clear Log</button>
 
 <script>
+    // --- UUIDs & Globals ---
     const SERVICE_UUID = '11111111-1111-1111-1111-111111111110';
     const UUID_ACTION  = '11111111-1111-1111-2222-111111111116';
     const UUID_MMWAVE  = '11111111-1111-1111-2222-111111111115';
@@ -111,13 +111,12 @@
     const SINGLE_CHARS = {
         'valBat': '11111111-1111-1111-2222-111111111112',
         'valLux': '11111111-1111-1111-2222-111111111113',
-        'valPir': '11111111-1111-1111-2222-111111111114',
-        // NEW UUID FOR INTERNAL AMBIENT LIGHT
-        'valAmbInt': '11111111-1111-1111-2222-111111111118'
+        'valPir': '11111111-1111-1111-2222-111111111114'
     };
 
     let actionChar = null;
 
+    // --- Hardware Control Logic ---
     function toggleIR(cb) {
         const state = cb.checked ? '1' : '0';
         sendCommand(`Com;Control;IR;${state}`);
@@ -131,6 +130,7 @@
         sendCommand(`Com;Control;LED;${val}`);
     }
 
+    // --- Helper Functions ---
     function getTimestamp() {
         const now = new Date();
         const day = String(now.getDate()).padStart(2, '0');
@@ -147,6 +147,7 @@
         d.scrollTop = d.scrollHeight;
     }
 
+    // --- BLE Commands ---
     async function sendCommand(cmd) {
         if (!actionChar) { log("Error: Not connected"); return; }
         try {
@@ -168,8 +169,10 @@
         sendCommand(`Com;OTA;${ver};${ssid};${pass}`);
     }
 
+    // --- Data Handling ---
     function handleSingle(id, buf) {
-        const clean = new TextDecoder().decode(buf).replace(/[^0-9.\-]/g, '');
+        const decoder = new TextDecoder();
+        const clean = decoder.decode(buf).replace(/[^0-9.\-]/g, '');
         if (!clean) return;
         document.getElementById(id).innerText = clean;
         if (id === 'valLux') updateChart(luxChart, parseFloat(clean));
@@ -186,6 +189,7 @@
         });
     }
 
+    // --- Charts ---
     const chartConfig = (l, c) => ({
         type: 'line',
         data: { labels: [], datasets: [{ label: l, data: [], borderColor: c, tension: 0.3, fill: false, pointRadius: 0 }] },
@@ -202,6 +206,7 @@
         chart.update('none');
     }
 
+    // --- Core BLE Connection ---
     async function subscribeChar(service, id, uuid, handler) {
         try {
             const char = await service.getCharacteristic(uuid);
